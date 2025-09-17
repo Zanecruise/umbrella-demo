@@ -1,0 +1,5 @@
+{
+  "name": "Umbrella",
+  "description": "Uma ferramenta de IA que analisa sua carteira de investimentos em PDF e fornece insights detalhados sobre alocação, risco e performance.",
+  "requestFramePermissions": []
+}
