@@ -1,5 +1,6 @@
 import React from 'react';
-import { AnalysisResultData, AnalysisFlag, Asset, AssetAnalysis } from '../types';
+import { AnalysisResultData, AnalysisFlag, Asset, AssetAnalysis, KpiData } from '../types';
+import KpiCard from './KpiCard'; // Import the new component
 
 const ScoreCard: React.FC<{ title: string; score: number }> = ({ title, score }) => {
     const getColor = (type: 'border' | 'text' | 'bg') => {
@@ -47,7 +48,8 @@ const FlagItem: React.FC<{ flagData: AnalysisFlag, type: 'positive' | 'negative'
     );
 };
 
-const AnalysisResult: React.FC<{ data: AnalysisResultData }> = ({ data }) => {
+// Component now accepts kpis as a prop
+const AnalysisResult: React.FC<{ data: AnalysisResultData; kpis: KpiData }> = ({ data, kpis }) => {
     return (
         <div className="bg-white rounded-2xl shadow-xl p-6 md:p-8 border border-gray-200 animate-fade-in">
             <h2 className="text-3xl font-bold text-center mb-8 text-blue-600">Análise Concluída</h2>
@@ -121,13 +123,16 @@ const AnalysisResult: React.FC<{ data: AnalysisResultData }> = ({ data }) => {
                 <h3 className="text-xl font-semibold mb-4 text-gray-800">Análise Ativo a Ativo vs Cenário Brasileiro</h3>
                 <div className="space-y-4">
                     {data.assetAnalysis.map((asset, index) => (
-                         <details key={index} className="bg-gray-50 p-4 rounded-lg border border-gray-200 cursor-pointer transition-colors hover:bg-gray-100">
-                            <summary className="font-semibold text-gray-700">{asset.name}</summary>
+                         <div key={index} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm transition-shadow hover:shadow-md">
+                            <h4 className="font-semibold text-lg text-gray-800">{asset.name}</h4>
                             <p className="mt-2 text-gray-600">{asset.analysis}</p>
-                        </details>
+                        </div>
                     ))}
                 </div>
             </div>
+
+            {/* Render the KpiCard at the end */}
+            <KpiCard kpis={kpis} />
         </div>
     );
 };

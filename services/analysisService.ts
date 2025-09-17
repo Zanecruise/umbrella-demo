@@ -1,7 +1,7 @@
 import { AnalysisResultData, RiskProfile } from '../types';
 import { Model } from '../components/ModelSelector';
 
-const API_URL = 'http://localhost:8080';
+const API_URL = '';
 
 export const analyzePortfolio = async (
     pdfFile: File,

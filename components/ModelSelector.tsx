@@ -32,7 +32,7 @@ const ModelSelector: React.FC<ModelSelectorProps> = ({ selectedModel, onModelCha
                     }
                 >
                     <h3 className="text-lg font-bold text-gray-900">NVIDIA</h3>
-                    <p className="text-gray-600 mt-2">Análise de alta performance da NVIDIA (simulado).</p>
+                    <p className="text-gray-600 mt-2">Análise de alta performance da NVIDIA.</p>
                 </button>
             </div>
         </div>

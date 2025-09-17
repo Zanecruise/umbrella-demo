@@ -1,4 +1,3 @@
-// Fix: Implement the main App component to manage state, orchestrate UI components, and handle the portfolio analysis workflow.
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import PdfUploader from './components/PdfUploader';
@@ -7,7 +6,7 @@ import ModelSelector, { Model } from './components/ModelSelector';
 import Loader from './components/Loader';
 import AnalysisResult from './components/AnalysisResult';
 import History from './components/History';
-import { RiskProfile, AnalysisResultData, HistoricAnalysis } from './types';
+import { RiskProfile, ApiResponse, HistoricAnalysis } from './types'; // Updated import
 import { analyzePortfolio } from './services/analysisService';
 
 const App: React.FC = () => {
@@ -15,7 +14,8 @@ const App: React.FC = () => {
     const [riskProfile, setRiskProfile] = useState<RiskProfile>(RiskProfile.Moderado);
     const [selectedModel, setSelectedModel] = useState<Model>('gemini');
     const [isLoading, setIsLoading] = useState<boolean>(false);
-    const [analysisResult, setAnalysisResult] = useState<AnalysisResultData | null>(null);
+    // State now holds the entire ApiResponse
+    const [apiResponse, setApiResponse] = useState<ApiResponse | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [history, setHistory] = useState<HistoricAnalysis[]>([]);
 
@@ -31,14 +31,15 @@ const App: React.FC = () => {
         }
     }, []);
 
-    const addToHistory = (result: AnalysisResultData) => {
+    // Updated to handle the full ApiResponse
+    const addToHistory = (response: ApiResponse) => {
         if (!selectedFile) return;
         const newEntry: HistoricAnalysis = {
             id: new Date().toISOString(),
             fileName: selectedFile.name,
             riskProfile: riskProfile,
             timestamp: Date.now(),
-            analysis: result,
+            apiResponse: response, // Store the full response
         };
         
         setHistory(prevHistory => {
@@ -69,11 +70,12 @@ const App: React.FC = () => {
 
         setIsLoading(true);
         setError(null);
-        setAnalysisResult(null);
+        setApiResponse(null);
 
         try {
+            // The service now returns the full ApiResponse
             const result = await analyzePortfolio(selectedFile, riskProfile, selectedModel);
-            setAnalysisResult(result);
+            setApiResponse(result);
             addToHistory(result);
         } catch (err) {
             console.error(err);
@@ -83,13 +85,14 @@ const App: React.FC = () => {
         }
     }, [selectedFile, riskProfile, selectedModel]);
     
-    const handleLoadFromHistory = (analysis: AnalysisResultData) => {
-        setAnalysisResult(analysis);
+    // Updated to load the full response from history
+    const handleLoadFromHistory = (historicEntry: HistoricAnalysis) => {
+        setApiResponse(historicEntry.apiResponse);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     const handleNewAnalysis = () => {
-        setAnalysisResult(null);
+        setApiResponse(null);
         setSelectedFile(null);
         setError(null);
         setRiskProfile(RiskProfile.Moderado);
@@ -102,7 +105,7 @@ const App: React.FC = () => {
             <Header />
             <main className="container mx-auto p-4 md:p-8">
                 <div className="max-w-4xl mx-auto space-y-8">
-                    {!analysisResult && !isLoading && (
+                    {!apiResponse && !isLoading && (
                         <div className="bg-white rounded-2xl shadow-xl p-6 md:p-8 border border-gray-200 space-y-6 animate-fade-in">
                             <PdfUploader onFileSelect={setSelectedFile} />
                             <RiskProfileSelector selectedProfile={riskProfile} onProfileChange={setRiskProfile} />
@@ -124,9 +127,10 @@ const App: React.FC = () => {
 
                     {isLoading && <Loader />}
 
-                    {analysisResult && (
+                    {apiResponse && (
                          <div className="space-y-8">
-                             <AnalysisResult data={analysisResult} />
+                             {/* Pass the correct parts of the response to the component */}
+                             <AnalysisResult data={apiResponse.analysis} kpis={apiResponse.kpis} />
                              <div className="text-center">
                                 <button
                                      onClick={handleNewAnalysis}

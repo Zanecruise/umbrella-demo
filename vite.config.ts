@@ -14,6 +14,15 @@ export default defineConfig(({ mode }) => {
         alias: {
           '@': path.resolve(__dirname, '.'),
         }
-      }
+      },
+      server: {
+        proxy: {
+          '/analyze': {
+            target: 'http://localhost:8080',
+            changeOrigin: true,
+            secure: false,
+          },
+        },
+      },
     };
 });

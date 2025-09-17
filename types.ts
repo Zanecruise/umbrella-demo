@@ -20,6 +20,7 @@ export interface AssetAnalysis {
     analysis: string;
 }
 
+// This remains the same, as it represents the core analysis data
 export interface AnalysisResultData {
   scores: {
       positioning: number;
@@ -33,10 +34,23 @@ export interface AnalysisResultData {
   assetAnalysis: AssetAnalysis[];
 }
 
+// New type for the KPIs
+export interface KpiData {
+    duration: string;
+    server: string;
+}
+
+// New type for the full API response
+export interface ApiResponse {
+    analysis: AnalysisResultData;
+    kpis: KpiData;
+}
+
 export interface HistoricAnalysis {
   id: string;
   fileName: string;
   riskProfile: RiskProfile;
   timestamp: number;
-  analysis: AnalysisResultData;
+  // The historic analysis will now also store the full response
+  apiResponse: ApiResponse;
 }

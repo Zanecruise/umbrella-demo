@@ -8,7 +8,15 @@ const bufferToGenerativePart = (buffer: Buffer, mimeType: string) => {
     };
 };
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+let ai: GoogleGenAI;
+
+// Lazy initialization of the GoogleGenAI client
+const getAiClient = () => {
+    if (!ai) {
+        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+    }
+    return ai;
+};
 
 const schema = {
     type: Type.OBJECT,
@@ -71,6 +79,9 @@ const schema = {
     required: ['scores', 'summary', 'positiveFlags', 'negativeFlags', 'portfolioBreakdown', 'assetAnalysis']
 };
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000; // 2 seconds
+
 export const analyzeWithGemini = async (file: Express.Multer.File, riskProfile: RiskProfile): Promise<AnalysisResultData> => {
     const model = 'gemini-1.5-flash';
     const pdfPart = bufferToGenerativePart(file.buffer, file.mimetype);
@@ -93,22 +104,48 @@ export const analyzeWithGemini = async (file: Express.Multer.File, riskProfile: 
         Retorne a análise estritamente no formato JSON especificado.
     `;
 
-    const response = await ai.models.generateContent({
-        model: model,
-        contents: { parts: [pdfPart, { text: prompt }] },
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: schema,
-        },
-    });
-    
-    const jsonText = (response.text ?? '').trim();
-    
-    try {
-        const result = JSON.parse(jsonText);
-        return result as AnalysisResultData;
-    } catch (e) {
-        console.error("Failed to parse Gemini response:", jsonText);
-        throw new Error("A resposta da IA não estava no formato JSON esperado.");
+    let lastError: any;
+
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            const client = getAiClient();
+            const response = await client.models.generateContent({
+                model: model,
+                contents: { parts: [pdfPart, { text: prompt }] },
+                config: {
+                    responseMimeType: "application/json",
+                    responseSchema: schema,
+                },
+            });
+
+            const jsonText = (response.text ?? '').trim();
+
+            if (!jsonText) {
+                console.error(`Gemini response is empty on attempt ${attempt}. This might be due to content filtering or other safety reasons.`);
+                throw new Error("A resposta da IA estava vazia. Verifique os logs do servidor para mais detalhes.");
+            }
+            
+            const result = JSON.parse(jsonText);
+            return result as AnalysisResultData;
+        } catch (e: any) {
+            lastError = e;
+            console.error(`Attempt ${attempt} failed:`, e.message);
+
+            // Check if the error is a 503 Service Unavailable error
+            if (e.message && e.message.includes("503")) {
+                if (attempt < MAX_RETRIES) {
+                    console.log(`Service unavailable (503). Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                    continue; // Continue to the next attempt
+                }
+            }
+            
+            // For non-retryable errors or after the last retry, break the loop.
+            break;
+        }
     }
+
+    // If the loop finished without returning, it means all retries failed.
+    console.error("Error during call to Gemini API after all retries:", lastError);
+    throw new Error("Falha ao processar a análise com o Gemini. Verifique os logs do servidor.");
 };
