@@ -9,12 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "react": "^19.1.1",
     "@google/genai": "^1.20.0",
+    "@types/form-data": "^2.2.1",
+    "@types/node-fetch": "^2.6.13",
+    "form-data": "^4.0.4",
+    "node-fetch": "^2.7.0",
+    "react": "^19.1.1",
     "react-dom": "^19.1.1"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
+    "@types/node": "^22.18.5",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"

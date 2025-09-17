@@ -1,22 +1,10 @@
-// Fix: Implement the Gemini API service to analyze the portfolio. This file contains the logic to call the Gemini API with the user's PDF and risk profile, using a structured schema for the JSON response.
 import { GoogleGenAI, Type } from "@google/genai";
 import { AnalysisResultData, RiskProfile } from '../types';
 
-// Helper function to convert file to base64
-const fileToGenerativePart = async (file: File) => {
-    const base64EncodedDataPromise = new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            if (typeof reader.result === 'string') {
-                resolve(reader.result.split(',')[1]);
-            } else {
-                resolve('');
-            }
-        };
-        reader.readAsDataURL(file);
-    });
+// Helper function to convert buffer to generative part
+const bufferToGenerativePart = (buffer: Buffer, mimeType: string) => {
     return {
-        inlineData: { data: await base64EncodedDataPromise, mimeType: file.type },
+        inlineData: { data: buffer.toString("base64"), mimeType },
     };
 };
 
@@ -83,10 +71,9 @@ const schema = {
     required: ['scores', 'summary', 'positiveFlags', 'negativeFlags', 'portfolioBreakdown', 'assetAnalysis']
 };
 
-
-export const analyzePortfolio = async (pdfFile: File, riskProfile: RiskProfile): Promise<AnalysisResultData> => {
-    const model = 'gemini-2.5-flash';
-    const pdfPart = await fileToGenerativePart(pdfFile);
+export const analyzeWithGemini = async (file: Express.Multer.File, riskProfile: RiskProfile): Promise<AnalysisResultData> => {
+    const model = 'gemini-1.5-flash';
+    const pdfPart = bufferToGenerativePart(file.buffer, file.mimetype);
 
     const prompt = `
         Analise a carteira de investimentos contida neste documento PDF. O perfil de risco do investidor é '${riskProfile}'.
@@ -115,7 +102,7 @@ export const analyzePortfolio = async (pdfFile: File, riskProfile: RiskProfile):
         },
     });
     
-    const jsonText = response.text.trim();
+    const jsonText = (response.text ?? '').trim();
     
     try {
         const result = JSON.parse(jsonText);

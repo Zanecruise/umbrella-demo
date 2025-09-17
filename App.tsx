@@ -3,15 +3,17 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import PdfUploader from './components/PdfUploader';
 import RiskProfileSelector from './components/RiskProfileSelector';
+import ModelSelector, { Model } from './components/ModelSelector';
 import Loader from './components/Loader';
 import AnalysisResult from './components/AnalysisResult';
 import History from './components/History';
 import { RiskProfile, AnalysisResultData, HistoricAnalysis } from './types';
-import { analyzePortfolio } from './services/geminiService';
+import { analyzePortfolio } from './services/analysisService';
 
 const App: React.FC = () => {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [riskProfile, setRiskProfile] = useState<RiskProfile>(RiskProfile.Moderado);
+    const [selectedModel, setSelectedModel] = useState<Model>('gemini');
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [analysisResult, setAnalysisResult] = useState<AnalysisResultData | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -70,7 +72,7 @@ const App: React.FC = () => {
         setAnalysisResult(null);
 
         try {
-            const result = await analyzePortfolio(selectedFile, riskProfile);
+            const result = await analyzePortfolio(selectedFile, riskProfile, selectedModel);
             setAnalysisResult(result);
             addToHistory(result);
         } catch (err) {
@@ -79,7 +81,7 @@ const App: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [selectedFile, riskProfile]);
+    }, [selectedFile, riskProfile, selectedModel]);
     
     const handleLoadFromHistory = (analysis: AnalysisResultData) => {
         setAnalysisResult(analysis);
@@ -104,6 +106,7 @@ const App: React.FC = () => {
                         <div className="bg-white rounded-2xl shadow-xl p-6 md:p-8 border border-gray-200 space-y-6 animate-fade-in">
                             <PdfUploader onFileSelect={setSelectedFile} />
                             <RiskProfileSelector selectedProfile={riskProfile} onProfileChange={setRiskProfile} />
+                            <ModelSelector selectedModel={selectedModel} onModelChange={setSelectedModel} />
                              <button
                                 onClick={handleAnalyzeClick}
                                 disabled={isAnalyzeButtonDisabled}
