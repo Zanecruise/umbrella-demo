@@ -32,6 +32,23 @@ type ServiceAccountCredentials = {
     project_id?: string;
 };
 
+const readProjectIdFromEnv = () => {
+    return process.env.GOOGLE_CLOUD_PROJECT
+        ?? process.env.GCP_PROJECT
+        ?? process.env.GOOGLE_PROJECT_ID
+        ?? process.env.PROJECT_ID
+        ?? process.env.GCLOUD_PROJECT
+        ?? undefined;
+};
+
+const readLocationFromEnv = () => {
+    return process.env.GOOGLE_CLOUD_LOCATION
+        ?? process.env.GOOGLE_GENAI_LOCATION
+        ?? process.env.GCP_REGION
+        ?? process.env.GOOGLE_REGION
+        ?? "us-central1";
+};
+
 const decodeBase64IfNeeded = (value: string) => {
     const trimmed = value.trim();
 
@@ -164,8 +181,8 @@ const loadServiceAccount = (): {
         }
     }
 
-    resolvedProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GOOGLE_PROJECT_ID;
-    resolvedLocation = process.env.GOOGLE_CLOUD_LOCATION ?? process.env.GOOGLE_GENAI_LOCATION ?? "us-central1";
+    resolvedProjectId = resolvedProjectId ?? readProjectIdFromEnv();
+    resolvedLocation = resolvedLocation ?? readLocationFromEnv();
 
     cacheResolved = true;
 
@@ -179,46 +196,84 @@ const loadServiceAccount = (): {
 
 // Lazy initialization of the GoogleGenAI client
 const getAiClient = () => {
-    if (!ai) {
-        const { googleAuthOptions, hasExplicitServiceAccount } = loadServiceAccount();
+    if (ai) {
+        return ai;
+    }
 
-        if (hasExplicitServiceAccount || process.env.GOOGLE_GENAI_USE_VERTEXAI === "true") {
-            const projectId = resolvedProjectId
-                ?? process.env.GOOGLE_CLOUD_PROJECT
-                ?? process.env.GOOGLE_PROJECT_ID;
+    const { googleAuthOptions, hasExplicitServiceAccount } = loadServiceAccount();
+    const projectId = resolvedProjectId ?? readProjectIdFromEnv();
+    const location = resolvedLocation ?? readLocationFromEnv();
 
-            if (!projectId) {
+    if (projectId && !resolvedProjectId) {
+        resolvedProjectId = projectId;
+    }
+    if (location && !resolvedLocation) {
+        resolvedLocation = location;
+    }
+
+    const runningOnGcp = Boolean(
+        process.env.K_SERVICE
+        || process.env.GCP_PROJECT
+        || process.env.GOOGLE_CLOUD_PROJECT
+        || process.env.CLOUD_RUN_JOB
+    );
+    const forceVertex = process.env.GOOGLE_GENAI_USE_VERTEXAI === "true";
+
+    const createVertexClient = (project: string) => {
+        const config: Record<string, unknown> = {
+            vertexai: true,
+            project,
+            location,
+        };
+
+        if (googleAuthOptions) {
+            config.googleAuthOptions = googleAuthOptions;
+        }
+
+        return new GoogleGenAI(config);
+    };
+
+    const shouldTryVertex = hasExplicitServiceAccount || forceVertex || runningOnGcp;
+
+    if (shouldTryVertex) {
+        if (!projectId) {
+            if (hasExplicitServiceAccount || forceVertex) {
                 throw new Error(
                     "Gemini configuration error: missing Google Cloud project ID. Set GOOGLE_PROJECT_ID or GOOGLE_CLOUD_PROJECT."
                 );
             }
-
-            const location = resolvedLocation
-                ?? process.env.GOOGLE_CLOUD_LOCATION
-                ?? process.env.GOOGLE_GENAI_LOCATION
-                ?? "us-central1";
-
-            ai = new GoogleGenAI({
-                vertexai: true,
-                project: projectId,
-                location,
-                googleAuthOptions,
-            });
-            return ai;
+        } else {
+            try {
+                ai = createVertexClient(projectId);
+                return ai;
+            } catch (error) {
+                console.error("Failed to initialize Gemini Vertex AI client:", error);
+                if (hasExplicitServiceAccount || forceVertex) {
+                    throw error;
+                }
+            }
         }
-
-        const apiKey = process.env.GEMINI_API_KEY;
-
-        if (apiKey) {
-            ai = new GoogleGenAI({ apiKey });
-            return ai;
-        }
-
-        throw new Error(
-            "Gemini configuration error: define GEMINI_API_KEY or provide a service account via GOOGLE_APPLICATION_CREDENTIALS / GOOGLE_SERVICE_ACCOUNT_JSON."
-        );
     }
-    return ai;
+
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (apiKey) {
+        ai = new GoogleGenAI({ apiKey });
+        return ai;
+    }
+
+    if (projectId) {
+        try {
+            ai = createVertexClient(projectId);
+            return ai;
+        } catch (error) {
+            console.error("Fallback Vertex AI initialization failed:", error);
+        }
+    }
+
+    throw new Error(
+        "Gemini configuration error: define GEMINI_API_KEY or provide Google Cloud credentials (service account or Cloud Run default) alongside GOOGLE_PROJECT_ID / GOOGLE_CLOUD_PROJECT."
+    );
 };
 
 const schema = {
