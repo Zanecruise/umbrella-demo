@@ -1,4 +1,7 @@
+import fs from "fs";
+import path from "path";
 import { GoogleGenAI, Type } from "@google/genai";
+import type { GoogleAuthOptions } from "google-auth-library";
 import { AnalysisResultData, RiskProfile } from '../types';
 
 // Helper function to convert buffer to generative part
@@ -9,11 +12,211 @@ const bufferToGenerativePart = (buffer: Buffer, mimeType: string) => {
 };
 
 let ai: GoogleGenAI;
+let resolvedProjectId: string | undefined;
+let resolvedLocation: string | undefined;
+let cachedGoogleAuthOptions: GoogleAuthOptions | undefined;
+let cachedCredentials: ServiceAccountCredentials | undefined;
+let cacheResolved = false;
+let hasExplicitServiceAccount = false;
+
+const SERVICE_ACCOUNT_ENV_HINTS = [
+    "GOOGLE_SERVICE_ACCOUNT_JSON",
+    "GOOGLE_APPLICATION_CREDENTIALS_JSON",
+    "GOOGLE_APPLICATION_CREDENTIALS_BASE64",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+] as const;
+
+type ServiceAccountCredentials = {
+    client_email: string;
+    private_key: string;
+    project_id?: string;
+};
+
+const decodeBase64IfNeeded = (value: string) => {
+    const trimmed = value.trim();
+
+    // Quick heuristic: treat as base64 if it only contains base64 charset and decodes to JSON.
+    if (/^[A-Za-z0-9+/=\r\n]+$/.test(trimmed)) {
+        try {
+            const decoded = Buffer.from(trimmed, "base64").toString("utf8");
+            if (decoded.trim().startsWith("{")) {
+                return decoded;
+            }
+        } catch {
+            // Not base64; ignore.
+        }
+    }
+
+    return value;
+};
+
+const resolveCredentialFilePath = (inputPath: string): string | undefined => {
+    if (!inputPath) {
+        return undefined;
+    }
+
+    if (path.isAbsolute(inputPath)) {
+        return fs.existsSync(inputPath) ? inputPath : undefined;
+    }
+
+    const candidateBases = [
+        process.cwd(),
+        path.resolve(__dirname),
+        path.resolve(__dirname, ".."),
+        path.resolve(__dirname, "../.."),
+        path.resolve(__dirname, "../../.."),
+        path.resolve(__dirname, "../../../.."),
+    ];
+
+    for (const base of candidateBases) {
+        const candidate = path.resolve(base, inputPath);
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return undefined;
+};
+
+const tryParseJson = (raw: string): ServiceAccountCredentials | undefined => {
+    try {
+        return JSON.parse(raw) as ServiceAccountCredentials;
+    } catch {
+        return undefined;
+    }
+};
+
+const loadServiceAccount = (): {
+    credentials?: ServiceAccountCredentials;
+    googleAuthOptions?: GoogleAuthOptions;
+    hasExplicitServiceAccount: boolean;
+} => {
+    if (cacheResolved) {
+        return {
+            credentials: cachedCredentials,
+            googleAuthOptions: cachedGoogleAuthOptions,
+            hasExplicitServiceAccount,
+        };
+    }
+
+    for (const envName of SERVICE_ACCOUNT_ENV_HINTS) {
+        const rawValue = process.env[envName];
+        if (!rawValue) {
+            continue;
+        }
+
+        const decodedValue = decodeBase64IfNeeded(rawValue);
+
+        if (decodedValue.trim().startsWith("{")) {
+            const credentials = tryParseJson(decodedValue);
+            if (credentials) {
+                cachedCredentials = credentials;
+                cachedGoogleAuthOptions = { credentials };
+                hasExplicitServiceAccount = true;
+                resolvedProjectId = process.env.GOOGLE_CLOUD_PROJECT
+                    ?? process.env.GOOGLE_PROJECT_ID
+                    ?? credentials.project_id;
+                resolvedLocation = process.env.GOOGLE_CLOUD_LOCATION
+                    ?? process.env.GOOGLE_GENAI_LOCATION
+                    ?? "us-central1";
+                cacheResolved = true;
+                return {
+                    credentials: cachedCredentials,
+                    googleAuthOptions: cachedGoogleAuthOptions,
+                    hasExplicitServiceAccount,
+                };
+            }
+        } else {
+            // Treat as file path
+            const resolvedFilePath = resolveCredentialFilePath(decodedValue);
+
+            if (!resolvedFilePath) {
+                const defaultPath = path.isAbsolute(decodedValue)
+                    ? decodedValue
+                    : path.resolve(process.cwd(), decodedValue);
+                console.warn(`Service account file path from ${envName} does not exist: ${defaultPath}`);
+                continue;
+            }
+
+            try {
+                const fileContents = fs.readFileSync(resolvedFilePath, "utf8");
+                const credentials = tryParseJson(fileContents);
+                if (credentials) {
+                    cachedCredentials = credentials;
+                    cachedGoogleAuthOptions = { keyFilename: resolvedFilePath };
+                    hasExplicitServiceAccount = true;
+                    resolvedProjectId = process.env.GOOGLE_CLOUD_PROJECT
+                        ?? process.env.GOOGLE_PROJECT_ID
+                        ?? credentials.project_id;
+                    resolvedLocation = process.env.GOOGLE_CLOUD_LOCATION
+                        ?? process.env.GOOGLE_GENAI_LOCATION
+                        ?? "us-central1";
+                    cacheResolved = true;
+                    return {
+                        credentials: cachedCredentials,
+                        googleAuthOptions: cachedGoogleAuthOptions,
+                        hasExplicitServiceAccount,
+                    };
+                }
+            } catch (error) {
+                console.error(`Failed to read service account file from ${resolvedFilePath}:`, error);
+            }
+        }
+    }
+
+    resolvedProjectId = process.env.GOOGLE_CLOUD_PROJECT ?? process.env.GOOGLE_PROJECT_ID;
+    resolvedLocation = process.env.GOOGLE_CLOUD_LOCATION ?? process.env.GOOGLE_GENAI_LOCATION ?? "us-central1";
+
+    cacheResolved = true;
+
+    // Leave cachedGoogleAuthOptions undefined so Application Default Credentials can be used if available.
+    return {
+        credentials: cachedCredentials,
+        googleAuthOptions: cachedGoogleAuthOptions,
+        hasExplicitServiceAccount,
+    };
+};
 
 // Lazy initialization of the GoogleGenAI client
 const getAiClient = () => {
     if (!ai) {
-        ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
+        const { googleAuthOptions, hasExplicitServiceAccount } = loadServiceAccount();
+
+        if (hasExplicitServiceAccount || process.env.GOOGLE_GENAI_USE_VERTEXAI === "true") {
+            const projectId = resolvedProjectId
+                ?? process.env.GOOGLE_CLOUD_PROJECT
+                ?? process.env.GOOGLE_PROJECT_ID;
+
+            if (!projectId) {
+                throw new Error(
+                    "Gemini configuration error: missing Google Cloud project ID. Set GOOGLE_PROJECT_ID or GOOGLE_CLOUD_PROJECT."
+                );
+            }
+
+            const location = resolvedLocation
+                ?? process.env.GOOGLE_CLOUD_LOCATION
+                ?? process.env.GOOGLE_GENAI_LOCATION
+                ?? "us-central1";
+
+            ai = new GoogleGenAI({
+                vertexai: true,
+                project: projectId,
+                location,
+                googleAuthOptions,
+            });
+            return ai;
+        }
+
+        const apiKey = process.env.GEMINI_API_KEY;
+
+        if (apiKey) {
+            ai = new GoogleGenAI({ apiKey });
+            return ai;
+        }
+
+        throw new Error(
+            "Gemini configuration error: define GEMINI_API_KEY or provide a service account via GOOGLE_APPLICATION_CREDENTIALS / GOOGLE_SERVICE_ACCOUNT_JSON."
+        );
     }
     return ai;
 };
@@ -81,9 +284,9 @@ const schema = {
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000; // 2 seconds
+const MODEL_SEQUENCE = ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
 
 export const analyzeWithGemini = async (file: Express.Multer.File, riskProfile: RiskProfile): Promise<AnalysisResultData> => {
-    const model = 'gemini-1.5-flash';
     const pdfPart = bufferToGenerativePart(file.buffer, file.mimetype);
 
     const prompt = `
@@ -106,42 +309,52 @@ export const analyzeWithGemini = async (file: Express.Multer.File, riskProfile: 
 
     let lastError: any;
 
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        try {
-            const client = getAiClient();
-            const response = await client.models.generateContent({
-                model: model,
-                contents: { parts: [pdfPart, { text: prompt }] },
-                config: {
-                    responseMimeType: "application/json",
-                    responseSchema: schema,
-                },
-            });
+    for (const model of MODEL_SEQUENCE) {
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                const client = getAiClient();
+                const response = await client.models.generateContent({
+                    model,
+                    contents: [
+                        {
+                            role: "user",
+                            parts: [pdfPart, { text: prompt }],
+                        },
+                    ],
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: schema,
+                    },
+                });
 
-            const jsonText = (response.text ?? '').trim();
+                const jsonText = (response.text ?? '').trim();
 
-            if (!jsonText) {
-                console.error(`Gemini response is empty on attempt ${attempt}. This might be due to content filtering or other safety reasons.`);
-                throw new Error("A resposta da IA estava vazia. Verifique os logs do servidor para mais detalhes.");
-            }
-            
-            const result = JSON.parse(jsonText);
-            return result as AnalysisResultData;
-        } catch (e: any) {
-            lastError = e;
-            console.error(`Attempt ${attempt} failed:`, e.message);
+                if (!jsonText) {
+                    console.error(`Gemini response is empty on attempt ${attempt} for model ${model}. This might be due to content filtering or other safety reasons.`);
+                    throw new Error("A resposta da IA estava vazia. Verifique os logs do servidor para mais detalhes.");
+                }
+                
+                const result = JSON.parse(jsonText);
+                return result as AnalysisResultData;
+            } catch (e: any) {
+                lastError = e;
+                console.error(`Attempt ${attempt} with model ${model} failed:`, e.message);
 
-            // Check if the error is a 503 Service Unavailable error
-            if (e.message && e.message.includes("503")) {
-                if (attempt < MAX_RETRIES) {
-                    console.log(`Service unavailable (503). Retrying in ${RETRY_DELAY_MS / 1000}s...`);
+                if (e.message && e.message.includes("503") && attempt < MAX_RETRIES) {
+                    console.log(`Service unavailable (503) with model ${model}. Retrying in ${RETRY_DELAY_MS / 1000}s...`);
                     await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
-                    continue; // Continue to the next attempt
+                    continue;
+                }
+
+                if (attempt < MAX_RETRIES) {
+                    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+                    continue;
                 }
             }
-            
-            // For non-retryable errors or after the last retry, break the loop.
-            break;
+        }
+
+        if (model !== MODEL_SEQUENCE[MODEL_SEQUENCE.length - 1]) {
+            console.warn(`Switching to fallback model after failures with ${model}.`);
         }
     }
 

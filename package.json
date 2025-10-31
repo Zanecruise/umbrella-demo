@@ -1,6 +1,9 @@
 {
   "name": "umbrella",
   "private": true,
+  "workspaces": [
+    "server"
+  ],
   "version": "0.0.0",
   "type": "module",
   "scripts": {

@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import fetch from 'node-fetch';
 const pdf = require('pdf-parse');
 import { AnalysisResultData, RiskProfile } from '../types';
@@ -40,6 +42,65 @@ const cleanJsonStructure = `
     ]
 }
 `;
+
+let cachedNvidiaApiKey: string | undefined;
+
+const resolveNvidiaKeyFilePath = (inputPath: string): string | undefined => {
+    if (!inputPath) {
+        return undefined;
+    }
+
+    if (path.isAbsolute(inputPath)) {
+        return fs.existsSync(inputPath) ? inputPath : undefined;
+    }
+
+    const candidateBases = [
+        process.cwd(),
+        path.resolve(__dirname),
+        path.resolve(__dirname, ".."),
+        path.resolve(__dirname, "../.."),
+        path.resolve(__dirname, "../../.."),
+    ];
+
+    for (const base of candidateBases) {
+        const candidate = path.resolve(base, inputPath);
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    return undefined;
+};
+
+const getNvidiaApiKey = (): string => {
+    if (cachedNvidiaApiKey) {
+        return cachedNvidiaApiKey;
+    }
+
+    const directKey = process.env.NVIDIA_API_KEY?.trim();
+    if (directKey) {
+        cachedNvidiaApiKey = directKey;
+        return cachedNvidiaApiKey;
+    }
+
+    const keyFileRef = process.env.NVIDIA_API_KEY_FILE?.trim();
+    if (keyFileRef) {
+        const resolvedPath = resolveNvidiaKeyFilePath(keyFileRef);
+        if (!resolvedPath) {
+            throw new Error(`NVIDIA configuration error: key file not found at '${keyFileRef}'.`);
+        }
+
+        const fileContents = fs.readFileSync(resolvedPath, "utf8").trim();
+        if (!fileContents) {
+            throw new Error(`NVIDIA configuration error: key file '${resolvedPath}' is empty.`);
+        }
+
+        cachedNvidiaApiKey = fileContents;
+        return cachedNvidiaApiKey;
+    }
+
+    throw new Error("NVIDIA configuration error: set NVIDIA_API_KEY or NVIDIA_API_KEY_FILE.");
+};
 
 export const analyzeWithNvidia = async (file: Express.Multer.File, riskProfile: RiskProfile): Promise<AnalysisResultData> => {
     // Step 1: Extract text from the PDF file
@@ -85,10 +146,12 @@ export const analyzeWithNvidia = async (file: Express.Multer.File, riskProfile: 
         stream: false,
     };
 
+    const apiKey = getNvidiaApiKey();
+
     const response = await fetch(NVIDIA_API_URL, {
         method: 'POST',
         headers: {
-            "Authorization": `Bearer ${process.env.NVIDIA_API_KEY}`,
+            "Authorization": `Bearer ${apiKey}`,
             "Content-Type": "application/json",
             "Accept": "application/json",
         },
