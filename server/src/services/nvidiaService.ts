@@ -1,5 +1,3 @@
-import fs from 'fs';
-import path from 'path';
 import fetch from 'node-fetch';
 const pdf = require('pdf-parse');
 import { AnalysisResultData, RiskProfile } from '../types';
@@ -45,33 +43,6 @@ const cleanJsonStructure = `
 
 let cachedNvidiaApiKey: string | undefined;
 
-const resolveNvidiaKeyFilePath = (inputPath: string): string | undefined => {
-    if (!inputPath) {
-        return undefined;
-    }
-
-    if (path.isAbsolute(inputPath)) {
-        return fs.existsSync(inputPath) ? inputPath : undefined;
-    }
-
-    const candidateBases = [
-        process.cwd(),
-        path.resolve(__dirname),
-        path.resolve(__dirname, ".."),
-        path.resolve(__dirname, "../.."),
-        path.resolve(__dirname, "../../.."),
-    ];
-
-    for (const base of candidateBases) {
-        const candidate = path.resolve(base, inputPath);
-        if (fs.existsSync(candidate)) {
-            return candidate;
-        }
-    }
-
-    return undefined;
-};
-
 const getNvidiaApiKey = (): string => {
     if (cachedNvidiaApiKey) {
         return cachedNvidiaApiKey;
@@ -83,23 +54,21 @@ const getNvidiaApiKey = (): string => {
         return cachedNvidiaApiKey;
     }
 
-    const keyFileRef = process.env.NVIDIA_API_KEY_FILE?.trim();
-    if (keyFileRef) {
-        const resolvedPath = resolveNvidiaKeyFilePath(keyFileRef);
-        if (!resolvedPath) {
-            throw new Error(`NVIDIA configuration error: key file not found at '${keyFileRef}'.`);
+    const encodedKey = process.env.NVIDIA_API_KEY_BASE64?.trim();
+    if (encodedKey) {
+        try {
+            const decodedKey = Buffer.from(encodedKey, "base64").toString("utf8").trim();
+            if (!decodedKey) {
+                throw new Error("decoded key is empty");
+            }
+            cachedNvidiaApiKey = decodedKey;
+            return cachedNvidiaApiKey;
+        } catch (error) {
+            throw new Error(`NVIDIA configuration error: failed to decode NVIDIA_API_KEY_BASE64 (${error instanceof Error ? error.message : String(error)}).`);
         }
-
-        const fileContents = fs.readFileSync(resolvedPath, "utf8").trim();
-        if (!fileContents) {
-            throw new Error(`NVIDIA configuration error: key file '${resolvedPath}' is empty.`);
-        }
-
-        cachedNvidiaApiKey = fileContents;
-        return cachedNvidiaApiKey;
     }
 
-    throw new Error("NVIDIA configuration error: set NVIDIA_API_KEY or NVIDIA_API_KEY_FILE.");
+    throw new Error("NVIDIA configuration error: set NVIDIA_API_KEY or NVIDIA_API_KEY_BASE64.");
 };
 
 export const analyzeWithNvidia = async (file: Express.Multer.File, riskProfile: RiskProfile): Promise<AnalysisResultData> => {

@@ -1,5 +1,3 @@
-import fs from "fs";
-import path from "path";
 import { GoogleGenAI, Type } from "@google/genai";
 import type { GoogleAuthOptions } from "google-auth-library";
 import { AnalysisResultData, RiskProfile } from '../types';
@@ -67,34 +65,6 @@ const decodeBase64IfNeeded = (value: string) => {
     return value;
 };
 
-const resolveCredentialFilePath = (inputPath: string): string | undefined => {
-    if (!inputPath) {
-        return undefined;
-    }
-
-    if (path.isAbsolute(inputPath)) {
-        return fs.existsSync(inputPath) ? inputPath : undefined;
-    }
-
-    const candidateBases = [
-        process.cwd(),
-        path.resolve(__dirname),
-        path.resolve(__dirname, ".."),
-        path.resolve(__dirname, "../.."),
-        path.resolve(__dirname, "../../.."),
-        path.resolve(__dirname, "../../../.."),
-    ];
-
-    for (const base of candidateBases) {
-        const candidate = path.resolve(base, inputPath);
-        if (fs.existsSync(candidate)) {
-            return candidate;
-        }
-    }
-
-    return undefined;
-};
-
 const tryParseJson = (raw: string): ServiceAccountCredentials | undefined => {
     try {
         return JSON.parse(raw) as ServiceAccountCredentials;
@@ -123,62 +93,26 @@ const loadServiceAccount = (): {
         }
 
         const decodedValue = decodeBase64IfNeeded(rawValue);
+        const credentials = tryParseJson(decodedValue);
 
-        if (decodedValue.trim().startsWith("{")) {
-            const credentials = tryParseJson(decodedValue);
-            if (credentials) {
-                cachedCredentials = credentials;
-                cachedGoogleAuthOptions = { credentials };
-                hasExplicitServiceAccount = true;
-                resolvedProjectId = process.env.GOOGLE_CLOUD_PROJECT
-                    ?? process.env.GOOGLE_PROJECT_ID
-                    ?? credentials.project_id;
-                resolvedLocation = process.env.GOOGLE_CLOUD_LOCATION
-                    ?? process.env.GOOGLE_GENAI_LOCATION
-                    ?? "us-central1";
-                cacheResolved = true;
-                return {
-                    credentials: cachedCredentials,
-                    googleAuthOptions: cachedGoogleAuthOptions,
-                    hasExplicitServiceAccount,
-                };
-            }
-        } else {
-            // Treat as file path
-            const resolvedFilePath = resolveCredentialFilePath(decodedValue);
-
-            if (!resolvedFilePath) {
-                const defaultPath = path.isAbsolute(decodedValue)
-                    ? decodedValue
-                    : path.resolve(process.cwd(), decodedValue);
-                console.warn(`Service account file path from ${envName} does not exist: ${defaultPath}`);
-                continue;
-            }
-
-            try {
-                const fileContents = fs.readFileSync(resolvedFilePath, "utf8");
-                const credentials = tryParseJson(fileContents);
-                if (credentials) {
-                    cachedCredentials = credentials;
-                    cachedGoogleAuthOptions = { keyFilename: resolvedFilePath };
-                    hasExplicitServiceAccount = true;
-                    resolvedProjectId = process.env.GOOGLE_CLOUD_PROJECT
-                        ?? process.env.GOOGLE_PROJECT_ID
-                        ?? credentials.project_id;
-                    resolvedLocation = process.env.GOOGLE_CLOUD_LOCATION
-                        ?? process.env.GOOGLE_GENAI_LOCATION
-                        ?? "us-central1";
-                    cacheResolved = true;
-                    return {
-                        credentials: cachedCredentials,
-                        googleAuthOptions: cachedGoogleAuthOptions,
-                        hasExplicitServiceAccount,
-                    };
-                }
-            } catch (error) {
-                console.error(`Failed to read service account file from ${resolvedFilePath}:`, error);
-            }
+        if (!credentials) {
+            console.warn(
+                `Skipping ${envName}: provide JSON credentials directly or base64-encoded JSON in the environment variable.`
+            );
+            continue;
         }
+
+        cachedCredentials = credentials;
+        cachedGoogleAuthOptions = { credentials };
+        hasExplicitServiceAccount = true;
+        resolvedProjectId = readProjectIdFromEnv() ?? credentials.project_id ?? resolvedProjectId;
+        resolvedLocation = readLocationFromEnv();
+        cacheResolved = true;
+        return {
+            credentials: cachedCredentials,
+            googleAuthOptions: cachedGoogleAuthOptions,
+            hasExplicitServiceAccount,
+        };
     }
 
     resolvedProjectId = resolvedProjectId ?? readProjectIdFromEnv();

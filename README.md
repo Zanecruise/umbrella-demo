@@ -14,11 +14,13 @@ This repo bundles a Vite frontend (React) with an Express API that talks to Gemi
    ```
 2. Create a `.env` in the repo root (see the existing `.env` sample). Minimum variables:
    ```
-   GEMINI_API_KEY=...                # optional if you rely on local GCP credentials
+   GEMINI_API_KEY=...                # optional when using Vertex AI/ADC
    NVIDIA_API_KEY=...
+   GOOGLE_APPLICATION_CREDENTIALS_JSON=...   # or leave empty if you rely on ADC locally
+   # GOOGLE_APPLICATION_CREDENTIALS_BASE64=...
    VITE_API_URL=http://localhost:8080
    ```
-   You can also point to service-account JSON files via `GOOGLE_APPLICATION_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS_JSON`.
+   Provide your service-account JSON inline (or via the base64 variant) so no local secret files are needed.
 3. Start the backend:
    ```bash
    npm run dev --workspace server
@@ -60,7 +62,7 @@ This repo bundles a Vite frontend (React) with an Express API that talks to Gemi
    - `GOOGLE_CLOUD_LOCATION` (for example `us-central1` or `southamerica-east1`).
    - `NVIDIA_API_KEY` (or reference a Secret Manager entry).
    - `GEMINI_API_KEY` if you choose the direct API key path. When omitted, the backend uses Application Default Credentials (ADC) from the attached service account.
-   - You do **not** need `NVIDIA_API_KEY_FILE` or `GOOGLE_APPLICATION_CREDENTIALS_JSON` when using secrets or ADC.
+   - No file-based secrets are required; use `NVIDIA_API_KEY`/`NVIDIA_API_KEY_BASE64` and `GOOGLE_APPLICATION_CREDENTIALS_JSON`/`GOOGLE_APPLICATION_CREDENTIALS_BASE64` as needed or rely on ADC.
 
 Once deployed, copy the public Cloud Run URL and update `VITE_API_URL` (locally and/or on Vercel) to point to it.
 
